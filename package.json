@@ -1,0 +1,26 @@
+{
+  "name": "payguard-agent",
+  "version": "0.1.0",
+  "description": "PayPal AI Hackathon — NL payouts + risk policies via PayPal Agent Toolkit/MCP (sandbox)",
+  "type": "module",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "author": "Andrés Sierra <sierraa348@gmail.com> (https://github.com/AndreSierraM)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AndreSierraM/payguard-agent.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
