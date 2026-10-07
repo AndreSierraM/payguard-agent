@@ -1,11 +1,13 @@
 /**
- * Thin PayPal config loader. No API calls yet.
+ * Thin PayPal config loader.
  *
- * Plan: hand this config to the official PayPal Agent Toolkit
- * (`@paypal/agent-toolkit`, see https://github.com/paypal/agent-toolkit)
- * or point an MCP client at the hosted PayPal MCP server
- * (sandbox: https://mcp.sandbox.paypal.com/sse ; production: https://mcp.paypal.com/sse). Do not hand-roll request shapes here —
- * follow the toolkit/MCP docs when wiring real calls.
+ * Prefer `createPayoutExecutor()` from `./executor.js` at startup: missing
+ * credentials become dry-run mode (warn) instead of a fatal throw, so the
+ * HTTP demo always boots. `loadPayPalConfig` remains for callers that need
+ * a hard failure when creds are required.
+ *
+ * Hand the config to `@paypal/agent-toolkit` or point an MCP client at
+ * sandbox: https://mcp.sandbox.paypal.com/sse (NOT production mcp.paypal.com).
  */
 
 export type PayPalEnv = "sandbox" | "live";
@@ -27,6 +29,10 @@ export class MissingPayPalCredentialsError extends Error {
   }
 }
 
+/**
+ * Strict loader — throws if credentials are missing.
+ * Use createPayoutExecutor() when dry-run fallback is preferred.
+ */
 export function loadPayPalConfig(env: NodeJS.ProcessEnv = process.env): PayPalConfig {
   const clientId = env.PAYPAL_CLIENT_ID?.trim() ?? "";
   const clientSecret = env.PAYPAL_CLIENT_SECRET?.trim() ?? "";
@@ -40,4 +46,19 @@ export function loadPayPalConfig(env: NodeJS.ProcessEnv = process.env): PayPalCo
     throw new Error(`PAYPAL_ENV must be "sandbox" or "live" (got "${rawEnv}")`);
   }
   return { clientId, clientSecret, env: rawEnv };
+}
+
+/**
+ * Soft probe: returns config if both creds exist and env is sandbox|live,
+ * otherwise null (caller should dry-run).
+ */
+export function tryLoadPayPalConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): PayPalConfig | null {
+  try {
+    return loadPayPalConfig(env);
+  } catch (err) {
+    if (err instanceof MissingPayPalCredentialsError) return null;
+    throw err;
+  }
 }
