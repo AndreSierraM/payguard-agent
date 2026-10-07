@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PayGuard — NL payouts + policy gate</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #121a2b;
+      --border: #243049;
+      --text: #e8eefc;
+      --muted: #93a0b8;
+      --allow: #16a34a;
+      --block: #dc2626;
+      --confirm: #d97706;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #1e3a5f 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); margin-bottom: 1.5rem; line-height: 1.45; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem 1.2rem;
+      margin-bottom: 1rem;
+    }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input, textarea {
+      width: 100%;
+      background: #0a101c;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.65rem 0.75rem;
+      font-size: 1rem;
+    }
+    textarea { resize: vertical; min-height: 70px; }
+    textarea#intent {
+      border-color: var(--accent);
+      border-width: 1.5px;
+      min-height: 90px;
+    }
+    textarea#intent:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.9rem; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 0.65rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: white;
+    }
+    button.secondary { background: #334155; }
+    button.danger { background: #7f1d1d; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .theater-label { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+    .chip {
+      font-size: 0.8rem;
+      border: 1px dashed var(--border);
+      background: #0a101c;
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 0.3rem 0.7rem;
+      cursor: pointer;
+    }
+    .chip:hover { color: var(--text); border-color: var(--accent); }
+    .badge {
+      display: inline-block;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      padding: 0.25rem 0.6rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+    .badge.ALLOW { background: color-mix(in srgb, var(--allow) 25%, transparent); color: #86efac; }
+    .badge.BLOCK { background: color-mix(in srgb, var(--block) 25%, transparent); color: #fca5a5; font-weight: 900; text-shadow: 0 1px 2px rgba(0,0,0,.3); }
+    .badge.CONFIRM { background: color-mix(in srgb, var(--confirm) 25%, transparent); color: #fcd34d; }
+    .badge.ALLOW, .badge.BLOCK, .badge.CONFIRM { animation: pulseBadge 2s ease-in-out infinite; }
+    @keyframes pulseBadge { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+    ul.reasons { margin: 0.6rem 0 0; padding-left: 1.1rem; color: var(--text); }
+    ul.reasons li { margin: 0.25rem 0; }
+    .hits { margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted); }
+    .hit { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px dashed #1f2a3f; }
+    .hit span.status-fail { color: #fca5a5; }
+    .hit span.status-confirm { color: #fcd34d; }
+    .hit span.status-pass { color: #86efac; }
+    pre {
+      background: #0a101c;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem;
+      overflow: auto;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+    }
+    .hidden { display: none; }
+    .key-hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.4rem; }
+    code { background: #0a101c; padding: 0.1rem 0.35rem; border-radius: 4px; }
+    #errorBanner { border-color: var(--block); color: #fca5a5; font-size: 0.9rem; }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      max-width: 480px;
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .modal-head { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .modal-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+    .modal-actions button { flex: 1; }
+    .audit-row { display: flex; gap: 0.6rem; padding: 0.35rem 0; border-bottom: 1px dashed #1f2a3f; font-size: 0.8rem; align-items: baseline; }
+    .audit-time { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .audit-body { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+    .audit-body .badge { animation: none; font-size: 0.7rem; padding: 0.15rem 0.45rem; }
+    .audit-summary { color: var(--muted); }
+    .type-propose { color: var(--accent); font-weight: 700; }
+    .type-block { color: #fca5a5; font-weight: 700; }
+    .type-confirm { color: #86efac; font-weight: 700; }
+    .type-cancel { color: var(--muted); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PayGuard</h1>
+    <p class="sub">
+      NL proposes · policy decides · human confirms · PayPal executes (stub until sandbox).<br />
+      Demo theater: <strong>Pay Bob $2500</strong> → BLOCK · <strong>Pay Charlie $90</strong> → CONFIRM · <strong>Pay Alice $50</strong> → ALLOW
+    </p>
+
+    <div class="card">
+      <label for="apiKey">X-API-Key (judges)</label>
+      <input id="apiKey" value="payguard-demo-key" autocomplete="off" />
+      <p class="key-hint">Default local key is <code>payguard-demo-key</code>. Override with env <code>PAYGUARD_API_KEY</code>.</p>
+    </div>
+
+    <div class="card">
+      <label for="intent">Intent (NL) — primary input</label>
+      <textarea id="intent" placeholder='Pay Bob $2500'></textarea>
+      <span class="theater-label">demo theater · click a chip to fill the NL input</span>
+      <div class="chips">
+        <button type="button" class="chip" data-intent="Pay Alice $50">Pay Alice $50</button>
+        <button type="button" class="chip" data-intent="Pay Bob $2500">Pay Bob $2500</button>
+        <button type="button" class="chip" data-intent="Pay Charlie $90">Pay Charlie $90</button>
+        <button type="button" class="chip" data-intent="Pay Dana $120">Pay Dana $120</button>
+      </div>
+      <div class="row" style="margin-top:0.9rem">
+        <div>
+          <label for="amount">Amount</label>
+          <input id="amount" type="number" min="0" step="0.01" placeholder="50" />
+        </div>
+        <div>
+          <label for="currency">Currency</label>
+          <input id="currency" value="USD" />
+        </div>
+      </div>
+      <div style="margin-top:0.75rem">
+        <label for="recipient">Recipient</label>
+        <input id="recipient" placeholder="alice@example.com" />
+      </div>
+      <div class="actions">
+        <button id="btnPropose" type="button">Propose</button>
+        <button id="btnClear" class="secondary" type="button">Clear</button>
+      </div>
+    </div>
+
+    <div id="errorBanner" class="card hidden"></div>
+
+    <div id="verdictCard" class="card hidden">
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;background:#1e2d41;border-radius:10px;padding:0.6rem 0.8rem;margin-bottom:0.8rem">
+        <span>Decision</span>
+        <span id="badge" class="badge">—</span>
+        <span id="proposalMeta" class="key-hint"></span>
+      </div>
+      <ul id="reasons" class="reasons" style="margin:0.4rem 0 0;padding-left:1rem"></ul>
+      <div id="hits" class="hits" style="margin:0.5rem 0 0;padding-top:0.5rem;font-size:0.8rem;color:var(--muted);border-top:1px solid var(--border);padding-top:0.5rem"></div>
+    </div>
+
+    <div id="auditPanel" class="card hidden" style="margin-top:1.5rem;">
+      <strong style="color:var(--muted);font-size:0.85rem;display:block;margin-bottom:0.5rem;">Audit Log</strong>
+      <div id="auditList" style="max-height:200px;overflow-y:auto;padding-right:0.5rem"></div>
+      <div id="auditEmpty" style="color:var(--muted);font-size:0.85rem;display:none">No audit events yet.</div>
+    </div>
+
+    <div id="resultCard" class="card hidden">
+      <strong>Result</strong>
+      <pre id="resultPre"></pre>
+    </div>
+
+    <div id="modalOverlay" class="overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalBadge">
+        <div class="modal-head">
+          <span id="modalBadge" class="badge">—</span>
+          <span id="modalMeta" class="key-hint"></span>
+        </div>
+        <ul id="modalReasons" class="reasons" style="margin:0;padding-left:1.1rem"></ul>
+        <div class="modal-actions">
+          <button id="btnModalConfirm" type="button">Confirm</button>
+          <button id="btnModalCancel" class="danger" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let currentProposalId = null;
+
+    document.querySelectorAll(".chip").forEach((el) => {
+      el.addEventListener("click", () => {
+        $("intent").value = el.dataset.intent;
+        $("amount").value = "";
+        $("recipient").value = "";
+      });
+    });
+
+    function apiKey() {
+      return $("apiKey").value.trim() || "payguard-demo-key";
+    }
+
+    async function api(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-API-Key": apiKey(),
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error(data.hint || data.error || "Unauthorized — check X-API-Key");
+      }
+      if (!res.ok && res.status !== 200) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return data;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[c]);
+    }
+
+    function showError(msg) {
+      const banner = $("errorBanner");
+      banner.textContent = msg;
+      banner.classList.remove("hidden");
+    }
+
+    function hideError() {
+      $("errorBanner").classList.add("hidden");
+    }
+
+    function renderVerdictCard(data) {
+      const decision = data.decision || "—";
+      const badge = $("badge");
+      badge.textContent = decision;
+      badge.className = "badge " + decision;
+
+      const reasons = data.reasons || [];
+      $("reasons").innerHTML = reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")
+        || "<li>(no reasons)</li>";
+
+      const hits = data.ruleHits || data.checks || [];
+      $("hits").innerHTML = hits.map((h) =>
+        `<div class="hit"><span>${escapeHtml(h.name)}</span><span class="status-${h.status}">${escapeHtml(h.status)}</span></div>`
+      ).join("");
+
+      currentProposalId = data.proposalId || null;
+      $("proposalMeta").textContent = currentProposalId
+        ? `proposalId=${currentProposalId}`
+        : (data.proposal ? `${data.proposal.recipient} · ${data.proposal.amount} ${data.proposal.currency}` : "");
+    }
+
+    function showModal(data) {
+      const decision = data.decision || "—";
+      const badge = $("modalBadge");
+      badge.textContent = decision;
+      badge.className = "badge " + decision;
+
+      const reasons = data.reasons || [];
+      $("modalReasons").innerHTML = reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")
+        || "<li>(no reasons)</li>";
+
+      $("modalMeta").textContent = data.proposalId ? `proposalId=${data.proposalId}` : "";
+      $("modalOverlay").classList.add("open");
+    }
+
+    function hideModal() {
+      $("modalOverlay").classList.remove("open");
+    }
+
+    function showVerdict(data) {
+      renderVerdictCard(data);
+      const decision = data.decision;
+      if (decision === "ALLOW" || decision === "CONFIRM") {
+        $("verdictCard").classList.add("hidden");
+        showModal(data);
+      } else {
+        hideModal();
+        $("verdictCard").classList.remove("hidden");
+      }
+    }
+
+    async function confirmProposal() {
+      if (!currentProposalId) return;
+      try {
+        const data = await api("/payouts/confirm", { proposalId: currentProposalId });
+        $("resultCard").classList.remove("hidden");
+        $("resultPre").textContent = JSON.stringify(data, null, 2);
+        hideModal();
+        $("verdictCard").classList.add("hidden");
+        currentProposalId = null;
+        await refreshAudit();
+      } catch (err) {
+        showError(err.message || String(err));
+      }
+    }
+
+    async function cancelProposal() {
+      if (currentProposalId) {
+        try {
+          await api("/payouts/cancel", { proposalId: currentProposalId });
+        } catch (_) { /* UI clear even if cancel fails */ }
+      }
+      currentProposalId = null;
+      hideModal();
+      $("verdictCard").classList.add("hidden");
+      $("resultCard").classList.add("hidden");
+      await refreshAudit();
+    }
+
+    $("btnModalConfirm").addEventListener("click", confirmProposal);
+    $("btnModalCancel").addEventListener("click", cancelProposal);
+
+    $("btnPropose").addEventListener("click", async () => {
+      hideError();
+      $("resultCard").classList.add("hidden");
+      try {
+        const intent = $("intent").value.trim();
+        let body;
+        if (intent) {
+          body = { intent };
+        } else {
+          body = {
+            amount: Number($("amount").value),
+            currency: $("currency").value || "USD",
+            recipient: $("recipient").value.trim(),
+          };
+        }
+        const data = await api("/payouts/propose", body);
+        showVerdict(data);
+        $("resultCard").classList.remove("hidden");
+        $("resultPre").textContent = JSON.stringify(data, null, 2);
+        await refreshAudit();
+      } catch (err) {
+        const msg = err.message || String(err);
+        showError(msg);
+        $("resultCard").classList.remove("hidden");
+        $("resultPre").textContent = JSON.stringify({ error: msg }, null, 2);
+      }
+    });
+
+    $("btnClear").addEventListener("click", () => {
+      $("intent").value = "";
+      $("amount").value = "";
+      $("recipient").value = "";
+      hideError();
+      hideModal();
+      $("verdictCard").classList.add("hidden");
+      $("resultCard").classList.add("hidden");
+      currentProposalId = null;
+    });
+
+    async function refreshAudit() {
+      try {
+        const res = await fetch("/audit", { headers: { "X-API-Key": apiKey() } });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const events = Array.isArray(data.events) ? data.events : [];
+        $("auditPanel").classList.remove("hidden");
+        const list = $("auditList");
+        const empty = $("auditEmpty");
+        if (events.length === 0) {
+          list.innerHTML = "";
+          empty.style.display = "block";
+          return;
+        }
+        empty.style.display = "none";
+        list.innerHTML = events.slice().reverse().map(auditRow).join("");
+      } catch (_) { /* audit is best-effort */ }
+    }
+
+    function auditRow(ev) {
+      const time = new Date(ev.ts || Date.now()).toLocaleTimeString();
+      const bits = [`<span class="audit-type type-${escapeHtml(ev.type)}">${escapeHtml(ev.type)}</span>`];
+      if (ev.decision) bits.push(`<span class="badge ${escapeHtml(ev.decision)}">${escapeHtml(ev.decision)}</span>`);
+      const amount = typeof ev.amount === "number" ? `${ev.amount} ${escapeHtml(ev.currency || "")}`.trim() : "";
+      const summary = [amount, ev.recipient ? `→ ${escapeHtml(ev.recipient)}` : "", ev.proposalId || ev.payoutId || ""].filter(Boolean).join(" ");
+      return `<div class="audit-row"><span class="audit-time">${escapeHtml(time)}</span><span class="audit-body">${bits.join(" ")}${summary ? ` <span class="audit-summary">${summary}</span>` : ""}</span></div>`;
+    }
+  </script>
+</body>
+</html>
