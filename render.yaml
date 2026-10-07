@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: payguard-agent
+    runtime: node
+    plan: free
+    region: oregon
+    branch: feature/policy-engine-dry-run-api
+    buildCommand: npm i && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20.18.0"
+      - key: PAYGUARD_API_KEY
+        value: payguard-demo-key
+      # Dry-run: do not set PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET
+      # Optional caps (defaults apply if omitted):
+      # - key: PAYGUARD_PER_TX_LIMIT
+      #   value: "500"
+      # - key: PAYGUARD_DAILY_LIMIT
+      #   value: "2000"
+      # - key: PAYGUARD_ALLOW_LIST
+      #   value: alice@example.com,bob@example.com,dana@example.com
