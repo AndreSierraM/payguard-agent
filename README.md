@@ -45,6 +45,19 @@ npm i && npm run build && npm start
 | Pay Charlie $90 | **CONFIRM** (new payee) |
 | Pay Alice $50 | **ALLOW** |
 
+## Natural-language intent (first-class API field)
+
+The `POST /payouts/propose` endpoint accepts an `intent` string alongside or instead of structured fields. Supported shapes (case-insensitive):
+
+| Intent example | Parsed amount | Currency | Recipient | Memo |
+| --- | --- | --- | --- | --- |
+| `Pay Bob $2500` | 2500 | USD | bob@example.com | NL payout |
+| `send 90 dollars to charlie@example.com for lunch` | 90 | USD | charlie@example.com | lunch |
+| `transfer $50 to Alice memo October invoice` | 50 | USD | alice@example.com | October invoice |
+| `please pay dana 120 USD — contractor fee` | 120 | USD | dana@example.com | contractor fee |
+
+Memo markers (all work): `for`, `memo`, `notes`, `—` (em dash), `-` (hyphen). Currency: `$` prefix, ISO code (USD, EUR, GBP…), or words (dollars, euros, pounds). Recipient: email or seed name (alice/bob/charlie/dana).
+
 ## Judges: set X-API-Key
 
 Protected routes: `POST /payouts/propose`, `POST /payouts/confirm`, `POST /payouts/cancel`, `GET /audit`.
