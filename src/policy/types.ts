@@ -26,7 +26,8 @@ export type PolicyCheckName =
   | "velocity"
   | "duplicate";
 
-export type PolicyCheckStatus = "pass" | "fail" | "skip";
+/** pass = hard ok; fail = hard block; confirm = soft gate (human must approve); skip = unused */
+export type PolicyCheckStatus = "pass" | "fail" | "confirm" | "skip";
 
 export interface PolicyCheckResult {
   name: PolicyCheckName;
@@ -41,7 +42,17 @@ export interface PolicyViolation {
   details?: Record<string, unknown>;
 }
 
+/** Final policy verdict shown to humans / UI. */
+export type PolicyDecision = "ALLOW" | "BLOCK" | "CONFIRM";
+
 export interface PolicyEvaluation {
+  /** ALLOW | BLOCK | CONFIRM */
+  decision: PolicyDecision;
+  /** Human-readable reasons for the decision (demo / UI copy). */
+  reasons: string[];
+  /** Alias of checks for API clients that prefer ruleHits naming. */
+  ruleHits: PolicyCheckResult[];
+  /** @deprecated Prefer decision !== "BLOCK". Kept for callers that used allowed:boolean. */
   allowed: boolean;
   violations: PolicyViolation[];
   checks: PolicyCheckResult[];
@@ -83,7 +94,10 @@ export interface DuplicateConfig {
 
 export interface PolicyConfig {
   spendLimits: SpendLimitConfig;
-  /** If non-empty, recipient must be in this list (case-insensitive email/id) */
+  /**
+   * Trusted recipients (case-insensitive email/id).
+   * CRITICAL: empty allow-list ≠ allow-all. Unknown / empty → CONFIRM (soft), never silent pass.
+   */
   allowList: string[];
   velocity: VelocityConfig;
   duplicate: DuplicateConfig;

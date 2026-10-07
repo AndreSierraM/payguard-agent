@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PolicyEvaluation, ProposedPayout } from "../policy/types.js";
 
-export type ProposalStatus = "pending_confirmation" | "confirmed" | "rejected";
+export type ProposalStatus =
+  | "pending_confirmation"
+  | "confirmed"
+  | "cancelled"
+  | "rejected";
 
 export interface StoredProposal {
   id: string;
@@ -10,12 +14,14 @@ export interface StoredProposal {
   status: ProposalStatus;
   createdAt: number;
   confirmedAt?: number;
+  cancelledAt?: number;
 }
 
 export interface ProposalStore {
   create(payout: ProposedPayout, policy: PolicyEvaluation): StoredProposal;
   get(id: string): StoredProposal | undefined;
   markConfirmed(id: string): StoredProposal | undefined;
+  markCancelled(id: string): StoredProposal | undefined;
   list(): StoredProposal[];
 }
 
@@ -46,6 +52,18 @@ export class InMemoryProposalStore implements ProposalStore {
       ...existing,
       status: "confirmed",
       confirmedAt: Date.now(),
+    };
+    this.byId.set(id, updated);
+    return updated;
+  }
+
+  markCancelled(id: string): StoredProposal | undefined {
+    const existing = this.byId.get(id);
+    if (!existing) return undefined;
+    const updated: StoredProposal = {
+      ...existing,
+      status: "cancelled",
+      cancelledAt: Date.now(),
     };
     this.byId.set(id, updated);
     return updated;

@@ -3,6 +3,7 @@ import type {
   PolicyCheckResult,
   PolicyConfig,
   PolicyContext,
+  PolicyDecision,
   PolicyEvaluation,
   PolicyViolation,
   ProposedPayout,
@@ -67,25 +68,33 @@ function checkSpendLimitDaily(
   };
 }
 
+/**
+ * Allow-list is a SOFT gate: unknown / empty list → status "confirm" (not hard fail).
+ * Empty allow-list ≠ allow-all — nobody gets silent ALLOW.
+ */
 function checkAllowList(proposal: ProposedPayout, config: PolicyConfig): PolicyCheckResult {
   const list = config.allowList.map(normalizeRecipient).filter(Boolean);
+  const recipient = normalizeRecipient(proposal.recipient);
+
   if (list.length === 0) {
     return {
       name: "allow_list",
-      status: "skip",
-      message: "Allow-list is empty; all recipients permitted",
-      details: { allowListSize: 0 },
+      status: "confirm",
+      message:
+        "Allow-list is empty — recipient treated as untrusted; human confirmation required",
+      details: { allowListSize: 0, recipient: proposal.recipient },
     };
   }
-  const recipient = normalizeRecipient(proposal.recipient);
+
   if (!list.includes(recipient)) {
     return {
       name: "allow_list",
-      status: "fail",
-      message: `Recipient "${proposal.recipient}" is not on the allow-list`,
+      status: "confirm",
+      message: `Recipient "${proposal.recipient}" is not on the allow-list (new / untrusted payee)`,
       details: { recipient: proposal.recipient, allowListSize: list.length },
     };
   }
+
   return {
     name: "allow_list",
     status: "pass",
@@ -101,7 +110,6 @@ function checkVelocity(
 ): PolicyCheckResult {
   const { maxPayouts, windowMs } = config.velocity;
   const count = recent.filter((p) => inWindow(p, now, windowMs)).length;
-  // Proposed payout would be count + 1
   if (count + 1 > maxPayouts) {
     return {
       name: "velocity",
@@ -158,9 +166,72 @@ function checkDuplicate(
   };
 }
 
+function decide(checks: PolicyCheckResult[]): {
+  decision: PolicyDecision;
+  reasons: string[];
+  violations: PolicyViolation[];
+} {
+  const hardFails = checks.filter((c) => c.status === "fail");
+  const softConfirms = checks.filter((c) => c.status === "confirm");
+
+  const violations: PolicyViolation[] = hardFails.map((c) => ({
+    code: c.name,
+    message: c.message,
+    details: c.details,
+  }));
+
+  if (hardFails.length > 0) {
+    return {
+      decision: "BLOCK",
+      reasons: hardFails.map((c) => c.message),
+      violations,
+    };
+  }
+
+  if (softConfirms.length > 0) {
+    return {
+      decision: "CONFIRM",
+      reasons: softConfirms.map((c) => c.message),
+      violations: [],
+    };
+  }
+
+  return {
+    decision: "ALLOW",
+    reasons: ["All hard checks passed and recipient is on the allow-list"],
+    violations: [],
+  };
+}
+
+function blockedEvaluation(
+  message: string,
+  code: PolicyViolation["code"],
+  details?: Record<string, unknown>,
+): PolicyEvaluation {
+  const check: PolicyCheckResult = {
+    name: code,
+    status: "fail",
+    message,
+    details,
+  };
+  return {
+    decision: "BLOCK",
+    reasons: [message],
+    ruleHits: [check],
+    allowed: false,
+    violations: [{ code, message, details }],
+    checks: [check],
+  };
+}
+
 /**
  * Evaluate a proposed payout against the active policy config and recent history.
  * Does not mutate state; callers record payouts after human confirmation.
+ *
+ * Verdicts:
+ * - BLOCK — hard fail (spend, velocity, duplicate, invalid input)
+ * - CONFIRM — recipient not on allow-list (or allow-list empty) and no hard fail
+ * - ALLOW — recipient on allow-list and all hard checks pass
  */
 export function evaluatePolicies(
   proposal: ProposedPayout,
@@ -171,49 +242,17 @@ export function evaluatePolicies(
   const now = context.now ?? Date.now();
 
   if (!Number.isFinite(proposal.amount) || proposal.amount <= 0) {
-    const violation: PolicyViolation = {
-      code: "spend_limit_per_tx",
-      message: "Amount must be a positive finite number",
-      details: { amount: proposal.amount },
-    };
-    return {
-      allowed: false,
-      violations: [violation],
-      checks: [
-        {
-          name: "spend_limit_per_tx",
-          status: "fail",
-          message: violation.message,
-          details: violation.details,
-        },
-      ],
-    };
+    return blockedEvaluation("Amount must be a positive finite number", "spend_limit_per_tx", {
+      amount: proposal.amount,
+    });
   }
 
   if (!proposal.currency?.trim()) {
-    return {
-      allowed: false,
-      violations: [
-        {
-          code: "spend_limit_per_tx",
-          message: "Currency is required",
-        },
-      ],
-      checks: [],
-    };
+    return blockedEvaluation("Currency is required", "spend_limit_per_tx");
   }
 
   if (!proposal.recipient?.trim()) {
-    return {
-      allowed: false,
-      violations: [
-        {
-          code: "allow_list",
-          message: "Recipient is required",
-        },
-      ],
-      checks: [],
-    };
+    return blockedEvaluation("Recipient is required", "allow_list");
   }
 
   const checks: PolicyCheckResult[] = [
@@ -224,16 +263,13 @@ export function evaluatePolicies(
     checkDuplicate(proposal, config, recent, now),
   ];
 
-  const violations: PolicyViolation[] = checks
-    .filter((c) => c.status === "fail")
-    .map((c) => ({
-      code: c.name,
-      message: c.message,
-      details: c.details,
-    }));
+  const { decision, reasons, violations } = decide(checks);
 
   return {
-    allowed: violations.length === 0,
+    decision,
+    reasons,
+    ruleHits: checks,
+    allowed: decision !== "BLOCK",
     violations,
     checks,
   };

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ProposedPayout } from "../policy/types.js";
 import type { PayPalConfig } from "./client.js";
 import { PAYPAL_MCP_SANDBOX_HTTP, PAYPAL_MCP_SANDBOX_SSE } from "./mcp.js";
@@ -8,6 +9,8 @@ export interface ExecuteResult {
   mode: ExecutorMode;
   ok: boolean;
   proposalId: string;
+  /** Fake or real payout / transaction id */
+  payoutId?: string;
   message: string;
   /** Toolkit / provider payload when sandbox path is wired; opaque for dry-run */
   details?: Record<string, unknown>;
@@ -26,6 +29,7 @@ export class DryRunExecutor implements PayoutExecutor {
   readonly mode: ExecutorMode = "dry-run";
 
   async executeConfirmed(payout: ProposedPayout & { id: string }): Promise<ExecuteResult> {
+    const payoutId = `PAYOUT-DRY-${randomUUID()}`;
     const summary = {
       id: payout.id,
       amount: payout.amount,
@@ -35,15 +39,20 @@ export class DryRunExecutor implements PayoutExecutor {
       reference: payout.reference,
       idempotencyKey: payout.idempotencyKey,
     };
-    console.log("[payguard:dry-run] would execute payout:", JSON.stringify(summary));
+    console.log(
+      "[payguard:dry-run] would execute payout:",
+      JSON.stringify({ ...summary, payoutId }),
+    );
     return {
       mode: "dry-run",
       ok: true,
       proposalId: payout.id,
+      payoutId,
       message:
-        "Dry-run: payout logged only. Set PAYPAL_CLIENT_ID + PAYPAL_CLIENT_SECRET " +
-        "(PAYPAL_ENV=sandbox) to enable the PayPal Agent Toolkit sandbox path.",
+        "Dry-run: stub payout id issued (no PayPal network). Set PAYPAL_CLIENT_ID + " +
+        "PAYPAL_CLIENT_SECRET (PAYPAL_ENV=sandbox) to enable the PayPal Agent Toolkit path.",
       details: {
+        payoutId,
         proposed: summary,
         mcpSandboxSse: PAYPAL_MCP_SANDBOX_SSE,
         mcpSandboxHttp: PAYPAL_MCP_SANDBOX_HTTP,
@@ -74,7 +83,6 @@ export class SandboxToolkitExecutor implements PayoutExecutor {
 
   private async getToolkit(): Promise<unknown> {
     if (this.toolkit) return this.toolkit;
-    // Lazy import — avoid constructing network clients in dry-run / unit tests.
     const mod = await import("@paypal/agent-toolkit/ai-sdk");
     const { PayPalAgentToolkit } = mod as {
       PayPalAgentToolkit: new (opts: {
@@ -87,18 +95,13 @@ export class SandboxToolkitExecutor implements PayoutExecutor {
       clientId: this.config.clientId,
       clientSecret: this.config.clientSecret,
       configuration: {
-        actions: {
-          // Enable payout-related actions when wiring a real sandbox demo.
-          // Keep the surface narrow until NL + confirm flow is proven.
-        },
+        actions: {},
       },
     });
     return this.toolkit;
   }
 
   async executeConfirmed(payout: ProposedPayout & { id: string }): Promise<ExecuteResult> {
-    // Ensure toolkit can be constructed; actual payout tool invocation is
-    // left as the next integration step once sandbox creds are available.
     const toolkit = await this.getToolkit();
     console.log(
       "[payguard:sandbox] toolkit ready; payout confirm stub — wire tool call next:",

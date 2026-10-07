@@ -33,7 +33,7 @@ describe("createPayoutExecutor", () => {
     assert.equal(warning, undefined);
   });
 
-  it("DryRunExecutor logs and returns dry-run result", async () => {
+  it("DryRunExecutor returns stub PAYOUT-DRY-* payoutId", async () => {
     const exec = new DryRunExecutor();
     const result = await exec.executeConfirmed({
       id: "p-1",
@@ -44,5 +44,7 @@ describe("createPayoutExecutor", () => {
     assert.equal(result.mode, "dry-run");
     assert.equal(result.ok, true);
     assert.equal(result.proposalId, "p-1");
+    assert.ok(result.payoutId?.startsWith("PAYOUT-DRY-"));
+    assert.equal(result.details?.payoutId, result.payoutId);
   });
 });

@@ -3,9 +3,16 @@ import type { PolicyConfig } from "./types.js";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+/** Seed trusted payees for the hackathon demo. Charlie is intentionally absent (CONFIRM theater). */
+export const DEFAULT_ALLOW_LIST_SEED = [
+  "alice@example.com",
+  "bob@example.com",
+  "dana@example.com",
+] as const;
+
 /**
- * Default hackathon-friendly policy config.
- * Exported for GET /policies and as the evaluatePolicies default.
+ * Static default policy config (tests + GET /policies fallback).
+ * Runtime boots should prefer `loadPolicyConfigFromEnv()`.
  */
 export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
   spendLimits: {
@@ -13,9 +20,7 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
     dailyLimit: 2000,
     windowMs: DAY_MS,
   },
-  // Empty allow-list = allow any recipient (checks still run as pass/skip).
-  // Populate with sandbox emails for demos, e.g. ["contractor@example.com"].
-  allowList: [],
+  allowList: [...DEFAULT_ALLOW_LIST_SEED],
   velocity: {
     maxPayouts: 10,
     windowMs: HOUR_MS,

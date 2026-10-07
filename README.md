@@ -2,39 +2,60 @@
 
 > PayPal AI Hackathon — natural-language payouts + risk/policy checks via the PayPal Agent Toolkit / MCP (**sandbox only**).
 
-**PayGuard** turns a proposed payout into a guarded PayPal action: every proposal must pass a **policy engine** (spend limits, recipient allow-lists, velocity, duplicate detection) and an explicit **human confirmation** before any executor runs. Without sandbox credentials the server boots in **dry-run** mode (logs only, no network calls).
+**PayGuard** turns a proposed payout into a guarded PayPal action: every proposal gets a policy **decision** (`ALLOW` | `BLOCK` | `CONFIRM`), human-readable **reasons**, and an explicit **human confirmation** before any executor runs. Without sandbox credentials the server boots in **dry-run** mode (stub payout ids, no network calls).
 
 - Hackathon: PayPal AI Hackathon on Devpost (deadline ~Nov 12, 2026 PT)
 - Devpost submission: https://devpost.com/submit-to/31302-paypal-ai-hackathon/manage/submissions
 - Owner: Andrés Sierra — [@AndreSierraM](https://github.com/AndreSierraM) — sierraa348@gmail.com
 - License: MIT
 
-## What works today
+## What works today (P0 — no PayPal login)
 
 | Mode | When | Behavior |
 | --- | --- | --- |
-| **dry-run** (default) | Missing `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`, or `PAYPAL_ENV=live` | HTTP API + policy engine fully usable. Confirm logs the payout and returns `{ mode: "dry-run" }`. **No PayPal API calls.** |
-| **sandbox** | Both creds set and `PAYPAL_ENV=sandbox` | Lazy-loads `@paypal/agent-toolkit/ai-sdk` (`PayPalAgentToolkit`). Confirm constructs the toolkit; map tool calls when you paste sandbox creds. |
+| **dry-run** (default) | Missing `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`, or `PAYPAL_ENV=live` | Policy engine + HTTP + demo UI fully usable. Confirm returns stub `PAYOUT-DRY-<uuid>`. **No PayPal API calls.** |
+| **sandbox** (phase 2) | Both creds set and `PAYPAL_ENV=sandbox` | Lazy-loads `@paypal/agent-toolkit/ai-sdk`. Wire real payout tool calls when sandbox creds exist. |
 
 Live/prod is refused: `PAYPAL_ENV=live` forces dry-run. Never use production MCP (`mcp.paypal.com`).
 
-## Architecture
+### Policy decisions
 
-```
-POST /payouts/propose ──► policy engine (src/policy)
-                              │ fail → 400 + violations
-                              ▼ pass
-                         pending proposal (in-memory)
-                              │
-POST /payouts/confirm ──► human confirm stub
-                              │
-                         PayoutExecutor
-                    ┌─────────┴─────────┐
-                    dry-run          sandbox toolkit
-                 (log only)    (@paypal/agent-toolkit)
+| Decision | When | Next step |
+| --- | --- | --- |
+| **ALLOW** | Recipient on allow-list + all hard checks pass | Human Confirm → stub (or sandbox) payout |
+| **CONFIRM** | Recipient **not** on allow-list (or allow-list **empty**) + no hard fail | Human Confirm still required (new / untrusted payee) |
+| **BLOCK** | Hard fail: per-tx / daily / velocity / duplicate / invalid amount | Stop — no confirm |
+
+**Empty allow-list ≠ allow-all.** Unknown payees never silently pass.
+
+Seed allow-list (unless `PAYGUARD_ALLOW_LIST` overrides): `alice@example.com`, `bob@example.com`, `dana@example.com`. **Charlie is not seeded** (demo CONFIRM).
+
+Default caps: per-tx **500**, daily **2000** (override with `PAYGUARD_PER_TX_LIMIT` / `PAYGUARD_DAILY_LIMIT`).
+
+## Demo theater (UI)
+
+```bash
+npm i && npm run build && npm start
+# open http://localhost:3000/
 ```
 
-Optional later: NL layer (BYO `OPENAI_API_KEY` — hackathon has **no free LLM credits**).
+| Intent | Expected |
+| --- | --- |
+| Pay Bob $2500 | **BLOCK** (over per-tx 500) |
+| Pay Charlie $90 | **CONFIRM** (new payee) |
+| Pay Alice $50 | **ALLOW** |
+
+## Judges: set X-API-Key
+
+Protected routes: `POST /payouts/propose`, `POST /payouts/confirm`, `POST /payouts/cancel`, `GET /audit`.
+
+```http
+X-API-Key: payguard-demo-key
+```
+
+- Default when `PAYGUARD_API_KEY` is unset: **`payguard-demo-key`** (so `npm start` works out of the box).
+- Set a custom value in `.env` / Render for non-demo deploys.
+- Open routes: `GET /`, static UI, `GET /health`, `GET /policies`.
 
 ## Setup
 
@@ -45,106 +66,106 @@ git clone https://github.com/AndreSierraM/payguard-agent.git
 cd payguard-agent
 npm i
 cp .env.example .env   # optional — server starts without PayPal creds
-npm test               # policy + executor unit tests (offline)
+npm test
 npm run build
 npm start              # or: npm run dev
 ```
 
-Dry-run without any secrets:
+## Demo script (curl)
 
 ```bash
-# no .env needed
-npm run build && npm start
-curl -s localhost:3000/health
-# → {"ok":true,"service":"payguard-agent","mode":"dry-run",...}
+export KEY=payguard-demo-key
+export H="content-type: application/json"
+# no .env / no PayPal creds needed
+npm run build && npm start &
+sleep 1
+
+# Happy ALLOW — Alice $50
+curl -s -X POST localhost:3000/payouts/propose \
+  -H "$H" -H "X-API-Key: $KEY" \
+  -d '{"intent":"Pay Alice $50"}' | tee /tmp/allow.json
+# → decision: ALLOW, proposalId: ...
+
+curl -s -X POST localhost:3000/payouts/confirm \
+  -H "$H" -H "X-API-Key: $KEY" \
+  -d "{\"proposalId\":\"$(jq -r .proposalId /tmp/allow.json)\"}"
+# → payoutId: PAYOUT-DRY-...
+
+# BLOCK — Bob $2500
+curl -s -X POST localhost:3000/payouts/propose \
+  -H "$H" -H "X-API-Key: $KEY" \
+  -d '{"intent":"Pay Bob $2500"}'
+# → decision: BLOCK, reasons mention per-transaction limit
+
+# CONFIRM — Charlie $90 (new payee), then confirm stub
+curl -s -X POST localhost:3000/payouts/propose \
+  -H "$H" -H "X-API-Key: $KEY" \
+  -d '{"intent":"Pay Charlie $90"}' | tee /tmp/confirm.json
+# → decision: CONFIRM
+
+curl -s -X POST localhost:3000/payouts/confirm \
+  -H "$H" -H "X-API-Key: $KEY" \
+  -d "{\"proposalId\":\"$(jq -r .proposalId /tmp/confirm.json)\"}"
+# → payoutId: PAYOUT-DRY-...
+
+# Audit trail
+curl -s localhost:3000/audit -H "X-API-Key: $KEY"
 ```
 
-## Paste sandbox credentials later
+Field-based propose (same auth):
 
-1. Log in at https://developer.paypal.com/ (a regular PayPal account works).
-2. **Apps & Credentials** → **Sandbox** toggle:  
-   https://developer.paypal.com/dashboard/applications/sandbox
-3. Default Application or **Create App** → copy **Client ID** and **Secret**.
-4. Put them in `.env` (never commit `.env`):
+```bash
+curl -s -X POST localhost:3000/payouts/propose \
+  -H 'content-type: application/json' -H "X-API-Key: $KEY" \
+  -d '{"amount":50,"currency":"USD","recipient":"alice@example.com","memo":"Oct invoice"}'
+```
+
+## Architecture
+
+```
+GET  /                     demo UI (public/)
+POST /payouts/propose ──► policy engine → ALLOW | BLOCK | CONFIRM
+                              │ BLOCK → 200 + decision (no pending)
+                              ▼ ALLOW / CONFIRM
+                         pending proposal + audit(propose)
+                              │
+POST /payouts/confirm ──► human confirm
+                              │
+                         DryRunExecutor → PAYOUT-DRY-<uuid>
+                         (phase 2: sandbox toolkit)
+GET  /audit                append-only propose/block/confirm/cancel
+```
+
+HTTP **200** always carries `decision` / `reasons` / `ruleHits` for propose (UI-friendly). **400** only for malformed bodies. **401** if `X-API-Key` missing/wrong on protected routes.
+
+## Paste sandbox credentials later (phase 2)
+
+1. Log in at https://developer.paypal.com/
+2. **Apps & Credentials** → **Sandbox**: https://developer.paypal.com/dashboard/applications/sandbox
+3. Copy Client ID + Secret into `.env`:
 
 ```env
 PAYPAL_CLIENT_ID=...
 PAYPAL_CLIENT_SECRET=...
 PAYPAL_ENV=sandbox
-PORT=3000
 ```
 
-5. Restart. `GET /health` should report `"mode":"sandbox"`.
-
-Sandbox buyer/business accounts: **Testing Tools → Sandbox Accounts**.
-
-## HTTP API
-
-Listens on `process.env.PORT || 3000` (Render injects `PORT`).
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/health` | `{ ok, mode: "dry-run" \| "sandbox" }` |
-| `GET` | `/policies` | Current default policy config |
-| `POST` | `/payouts/propose` | Body `{ amount, currency, recipient, memo?, reference?, idempotencyKey? }` → policy check; on pass `{ status: "pending_confirmation", proposalId, proposal, policy }`; on fail `400` + `violations` |
-| `POST` | `/payouts/confirm` | Body `{ proposalId }` → run executor (dry-run or sandbox toolkit); `404` if unknown |
-
-Example dry-run flow:
-
-```bash
-# Propose
-curl -s -X POST localhost:3000/payouts/propose \
-  -H 'content-type: application/json' \
-  -d '{"amount":50,"currency":"USD","recipient":"contractor@example.com","memo":"Oct invoice"}'
-
-# Confirm (use proposalId from previous response)
-curl -s -X POST localhost:3000/payouts/confirm \
-  -H 'content-type: application/json' \
-  -d '{"proposalId":"<id>"}'
-```
-
-Default policies (see `GET /policies` / `src/policy/defaults.ts`):
-
-- Per-tx limit: **500**
-- Daily/window spend: **2000** / 24h
-- Allow-list: **empty** (all recipients allowed until you populate it)
-- Velocity: **10** payouts / hour
-- Duplicate: same recipient+amount+memo (or idempotencyKey) within 1h
+4. Restart → `GET /health` reports `"mode":"sandbox"`. Then wire toolkit payout tool invocation in `SandboxToolkitExecutor`.
 
 ## PayPal Agent Toolkit & MCP
-
-| Package | Version | Notes |
-| --- | --- | --- |
-| [`@paypal/agent-toolkit`](https://www.npmjs.com/package/@paypal/agent-toolkit) | ~1.11.0 | Subpaths: `/ai-sdk`, `/openai`, `/langchain`, `/bedrock`, `/mcp` |
-| [`@paypal/mcp`](https://www.npmjs.com/package/@paypal/mcp) | optional | Local MCP: `npx -y @paypal/mcp --tools=all` |
-
-Sandbox MCP (use these):
 
 | | URL |
 | --- | --- |
 | SSE | `https://mcp.sandbox.paypal.com/sse` |
 | HTTP | `https://mcp.sandbox.paypal.com/http` |
 
-> ⚠️ `https://mcp.paypal.com/sse` is **production**. PayGuard constants and docs point only at sandbox.
-
-Toolkit constructor (sandbox path, after creds exist):
-
-```ts
-import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
-const paypalToolkit = new PayPalAgentToolkit({
-  clientId: process.env.PAYPAL_CLIENT_ID,
-  clientSecret: process.env.PAYPAL_CLIENT_SECRET,
-  configuration: { actions: { /* enable payout actions as needed */ } },
-});
-```
-
-Dry-run never constructs the toolkit.
+> ⚠️ `https://mcp.paypal.com/sse` is **production**. Do not use it.
 
 ## Scripts
 
 | Script | Command |
 | --- | --- |
-| `npm test` | `tsx --test src/**/*.test.ts` (node:test, offline) |
+| `npm test` | offline unit tests |
 | `npm run build` | `tsc` → `dist/` |
 | `npm start` | `node dist/index.js` |
 | `npm run dev` | `tsx watch src/index.ts` |
@@ -153,27 +174,25 @@ Dry-run never constructs the toolkit.
 
 - **Build:** `npm ci && npm run build`
 - **Start:** `npm start`
-- **Port:** listen on `PORT` (already wired)
-- Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV=sandbox` in the Render dashboard when ready. App starts in dry-run without them.
+- **Port:** `PORT`
+- Set `PAYGUARD_API_KEY` (and later PayPal sandbox creds) in the dashboard.
 
 ## Key source layout
 
 ```
 src/
-  index.ts              # boot + HTTP listen
-  api/server.ts         # Express routes
-  api/proposals.ts      # in-memory pending proposals
-  policy/               # types, defaults, store, evaluatePolicies + tests
-  paypal/client.ts      # config loader (strict + soft)
-  paypal/executor.ts    # DryRunExecutor | SandboxToolkitExecutor
-  paypal/mcp.ts         # sandbox MCP URL constants
+  index.ts
+  api/server.ts auth.ts proposals.ts
+  audit/log.ts
+  intent/parse.ts
+  policy/          types, defaults, config(env), engine, store
+  paypal/          dry-run + sandbox executor, mcp constants
+public/index.html  demo UI
 ```
 
-## Security
+## Out of scope (cut for P0)
 
-- Sandbox only. Never commit `.env` or real credentials.
-- All payouts require policy pass + explicit confirm.
-- Missing creds → dry-run warn, not crash.
+Multi-agent, KYC, webhooks, Stripe, analytics, mobile, auto-approve, real PayPal wire (phase 2).
 
 ## License
 
